@@ -61,7 +61,7 @@ def evaluate_predictions(y_true : List, y_pred : List, target_names=None):
     precision, recall, f1, _ = precision_recall_fscore_support(y_true, y_pred, average="macro")
 
     print(f"\n{"="*60}\nResults:    \n{"="*60}")
-    print(f"Accuracy (macro):       {accuracy:.4f}")
+    print(f"Accuracy:               {accuracy:.4f}")
     print(f"Precision (macro):      {precision:.4f}")
     print(f"Recall (macro):         {recall:.4f}")
     print(f"F1 (macro):             {f1:.4f}")
