@@ -1,6 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
+import torch
 from tqdm import tqdm
 from typing import List
 from sklearn.metrics import (
@@ -9,6 +10,12 @@ from sklearn.metrics import (
     classification_report,
     ConfusionMatrixDisplay
 )
+from transformers import CLIPVisionModelWithProjection
+from torch.utils.data import DataLoader
+from transformers import logging as hf_logging
+from transformers import CLIPImageProcessor
+
+
 
 def count_observations(dataset):
     """
@@ -67,7 +74,7 @@ def evaluate_predictions(y_true : List, y_pred : List, target_names=None):
         "f1": f1
     }
 
-def plot_conf_matrix(y_true: List, y_pred: List, title: str ="Confusion Matrix"):
+def plot_conf_matrix(y_true: List, y_pred: List, title: str ="Confusion Matrix", display_labels=None):
     """Plots a confusion matrix for a set of preditions and true values with a configurable title.
     
     Parameters
@@ -78,13 +85,119 @@ def plot_conf_matrix(y_true: List, y_pred: List, title: str ="Confusion Matrix")
         List containing the predicted labels
     title : str (optional)
         Title for the confusion matrix figure, defaults to "Confusion Matrix".
+    display_labels (optional)
+        The list of labels to be used in the Confusion Matrix figure.
     """
 
-    ConfusionMatrixDisplay.from_predictions(y_true, y_pred, xticks_rotation=45)
+    ConfusionMatrixDisplay.from_predictions(y_true, y_pred, xticks_rotation=45, display_labels=display_labels)
     plt.title(title)
     plt.grid(False)
     plt.show()
 
+def get_device():
+    """Return gpu if available, otherwise return cpu. Handles cases for both Windows (cuda) and Apple Mac (mps)."""
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    elif torch.mps.is_available():
+        return torch.device("mps")
+    else:
+        return torch.device("cpu")
+
+def extract_image_embeddings(dataset, device):
+    """Extracts CLIP image embeddings and class labels from a given dataset.
+    Requirement: images have been preprocessed into pixel values with CLIPImageProcessor.
+    
+    Parameters
+    ----------
+    dataset
+        The dataset from which to compute the image embeddings
+    device
+        The device which handles the model inference computations, preferably a gpu.
+
+    Returns
+    -------
+    Numpy.Array
+        A numpy array of shape (dataset_size, 512) containing the image embeddings.
+    List[str]
+        A list containing the class labels of the dataset.
+    """
+    vision_model = CLIPVisionModelWithProjection.from_pretrained("openai/clip-vit-base-patch32").to(device)
+
+    # create DataLoader for processing in batches
+    dataset.set_format("torch", columns=["pixel_values"], output_all_columns=True)
+    loader = DataLoader(dataset, batch_size=32, num_workers=4)
+
+    all_embeds = []
+    all_labels = []
+
+    for batch in loader:
+        pixel_values = batch["pixel_values"].to(device)
+        batch_labels = batch["label"].tolist()
+        with torch.no_grad():
+            image_embeds = vision_model(pixel_values).image_embeds
+        image_embeds = image_embeds / image_embeds.norm(dim=-1, keepdim=True)
+
+        all_labels.extend(batch_labels)
+        all_embeds.append(image_embeds)
+
+    return torch.cat(all_embeds).cpu().numpy(), all_labels
+
+def sample_few_shot_embeddings(k: int, seed: int, dataset, device = None):
+    """Sample k images per class from a dataset and compute their CLIP image embeddings.
+
+    For each class label present in `dataset`, randomly selects k row indices
+    (without replacement) using a numpy random seed, gathers the resulting
+    k-shot subset, preprocesses the images into pixel values, and computes
+    CLIP image embeddings for the sampled subset.
+
+    Args:
+        k (int): Number of images to sample per class. Must not exceed the available number of images in smallest class
+        seed (int): Seed for `numpy.random`, applied before each class's sampling
+            call to make the selection reproducible.
+        dataset: A dataset with a `"label"` column and a `features["label"].names`
+            attribute listing class names (e.g. a Hugging Face `datasets.Dataset`).
+        device (optional): Device (e.g. "cpu" or "cuda") used for computing embeddings.
+            If None, defaults to the device returned by `get_device()`.
+
+    Returns:
+        tuple:
+            k_image_embeddings (np.ndarray): CLIP image embeddings for the sampled
+                k-shot subset, shape (k * num_classes, embedding_dim).
+            k_sample_labels (np.ndarray or list): Class labels corresponding to
+                each sampled embedding.
+    """
+
+    # Use gpu, if available, as default device
+    if not device:
+        device = get_device()
+    
+    # class labels present in dataset
+    labels = dataset.features["label"].names
+    
+    # Randomly select k images from each class
+    all_idx = []                                                    # list to collect all selected row indeces
+    for class_id in range(len(labels)):                             # loop through each class_id
+        label_col = np.array(dataset["label"])                      # extract label column as np.array
+        idx = np.where(label_col == class_id)[0]                    # extract all indexes of rows of class_id
+        np.random.seed(seed)                                        # set seed for numpy.random
+        k_idx = np.random.choice(idx, k, replace=False).tolist()    # choose k random indeces for current class
+        all_idx.extend(k_idx)                                       # append chosen indeces
+    k_sample = dataset.select(all_idx)                              # select randomly smapled indeces from dataset
+
+    # compute image embeddings for k-sample of training images
+
+    # preprocessing function to extract pixel values from images 
+    image_processor = CLIPImageProcessor.from_pretrained("openai/clip-vit-base-patch32")
+    def preprocess_images(examples):
+        images = examples["image"]
+        inputs = image_processor(images, return_tensors="pt")
+        examples["pixel_values"] = inputs["pixel_values"]
+        return examples
+
+    k_sample_processed = k_sample.map(preprocess_images, batched=True, remove_columns=["image"])    # extract pixel values
+    k_image_embeddings, k_sample_labels = extract_image_embeddings(k_sample_processed, device)      # compute CLIP image embeddings
+
+    return k_image_embeddings, k_sample_labels
 def embedding_dataframe_construction(dataset, labels, embedding_model):
     """Builds a Pandas Dataframe using the computed Image Embeddings Only
     
