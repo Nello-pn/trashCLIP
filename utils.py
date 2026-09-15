@@ -2,6 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
 import torch
+from tqdm import tqdm
 from typing import List
 from sklearn.metrics import (
     accuracy_score,
@@ -197,3 +198,43 @@ def sample_few_shot_embeddings(k: int, seed: int, dataset, device = None):
     k_image_embeddings, k_sample_labels = extract_image_embeddings(k_sample_processed, device)      # compute CLIP image embeddings
 
     return k_image_embeddings, k_sample_labels
+def embedding_dataframe_construction(dataset, labels, embedding_model):
+    """Builds a Pandas Dataframe using the computed Image Embeddings Only
+    
+    Parameters
+    ----------
+    dataset : List
+        List of images being processed 
+    labels : List
+        List of the labels of the images to add to the 'Class' column
+    embedding_model : Pytorch neural network model (CLIPVisionModelWithProjection)
+        CLIPVisionModelWithProjection model for extracting image embeddings.
+        
+    return
+    -----------
+    data_frame: pd.Dataframe
+        Pandas dataframe of shape (nX512) containing the embeddings and the target value
+    """
+
+    dataset_processed = dataset.map(preprocess_images, batched = True, remove_columns =["image"])
+    dataset_processed.set_format("torch", columns = ["pixel_values"], output_all_columns = True)
+    loader = DataLoader(dataset_processed, batch_size = 32, num_workers = 4)
+
+    all_embeds = []
+
+    for batch in tqdm(loader):
+        with torch.no_grad():
+            inputs = batch["pixel_values"].to(device)
+            outputs = embedding_model(inputs)
+        image_embeds = outputs.image_embeds
+        image_embeds = image_embeds / image_embeds.norm(dim=-1, keepdim=True)
+    
+        all_embeds.append(image_embeds)
+    
+    image_embeddings = torch.cat(all_embeds)
+    list_embeds = image_embeddings.cpu().numpy()
+    data_frame = pd.DataFrame(list_embeds)
+    data_frame['Class'] = labels
+
+    return data_frame
+
