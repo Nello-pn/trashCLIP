@@ -58,13 +58,13 @@ def evaluate_predictions(y_true : List, y_pred : List, target_names=None):
         except NameError: pass
 
     accuracy = accuracy_score(y_true, y_pred)
-    precision, recall, f1, _ = precision_recall_fscore_support(y_true, y_pred, average="weighted")
+    precision, recall, f1, _ = precision_recall_fscore_support(y_true, y_pred, average="macro")
 
-    print(f"\n{"="*60}\nResults:    \n {"="*60}")
-    print(f"Accuracy:       {accuracy:.4f}")
-    print(f"Precision:      {precision:.4f}")
-    print(f"Recall:         {recall:.4f}")
-    print(f"F1:             {f1:.4f}")
+    print(f"\n{"="*60}\nResults:    \n{"="*60}")
+    print(f"Accuracy (macro):       {accuracy:.4f}")
+    print(f"Precision (macro):      {precision:.4f}")
+    print(f"Recall (macro):         {recall:.4f}")
+    print(f"F1 (macro):             {f1:.4f}")
     print(classification_report(y_true, y_pred, target_names=target_names, zero_division=0))
 
     return {
@@ -216,11 +216,20 @@ def embedding_dataframe_construction(dataset, labels, embedding_model):
         Pandas dataframe of shape (nX512) containing the embeddings and the target value
     """
 
+    image_processor = CLIPImageProcessor.from_pretrained("openai/clip-vit-base-patch32")
+    def preprocess_images(examples):
+            images = examples["image"]
+            inputs = image_processor(images, return_tensors="pt")
+            examples["pixel_values"] = inputs["pixel_values"]
+            return examples
+
     dataset_processed = dataset.map(preprocess_images, batched = True, remove_columns =["image"])
     dataset_processed.set_format("torch", columns = ["pixel_values"], output_all_columns = True)
     loader = DataLoader(dataset_processed, batch_size = 32, num_workers = 4)
 
     all_embeds = []
+
+    device = get_device()
 
     for batch in tqdm(loader):
         with torch.no_grad():
