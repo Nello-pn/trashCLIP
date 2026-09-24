@@ -8,6 +8,7 @@ from sklearn.metrics import (
     accuracy_score,
     precision_recall_fscore_support,
     classification_report,
+    confusion_matrix,
     ConfusionMatrixDisplay
 )
 from transformers import CLIPVisionModelWithProjection
@@ -74,7 +75,7 @@ def evaluate_predictions(y_true : List, y_pred : List, target_names=None):
         "f1": f1
     }
 
-def plot_conf_matrix(y_true: List, y_pred: List, title: str ="Confusion Matrix", display_labels=None):
+def plot_conf_matrix(y_true: List, y_pred: List, title: str ="Confusion Matrix", normalize=True, display_labels=None):
     """Plots a confusion matrix for a set of preditions and true values with a configurable title.
     
     Parameters
@@ -85,11 +86,26 @@ def plot_conf_matrix(y_true: List, y_pred: List, title: str ="Confusion Matrix",
         List containing the predicted labels
     title : str (optional)
         Title for the confusion matrix figure, defaults to "Confusion Matrix".
+    normalize : bool, default True
+        Whether or not to normalize the values in the matrix.
     display_labels (optional)
         The list of labels to be used in the Confusion Matrix figure.
     """
 
-    ConfusionMatrixDisplay.from_predictions(y_true, y_pred, xticks_rotation=45, display_labels=display_labels)
+    # handle normalization parameter
+    if normalize:
+        normalize = "true"
+    else:
+        normalize = None
+
+    cm = confusion_matrix(y_true, y_pred, normalize=normalize)
+    cm_rounded = np.round(cm, 2)
+
+    disp = ConfusionMatrixDisplay(confusion_matrix=cm_rounded, display_labels=display_labels)
+
+    fig, ax = plt.subplots(figsize=(8,8))
+    disp.plot(ax=ax, xticks_rotation=45)
+
     plt.title(title)
     plt.grid(False)
     plt.show()
