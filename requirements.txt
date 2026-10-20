@@ -1,0 +1,15 @@
+torch==2.13.0
+transformers==5.13.1
+datasets==5.0.1
+kagglehub==1.0.2
+numpy==2.5.1
+pandas
+scikit-learn
+xgboost==3.4.1
+lightgbm==4.7.0
+matplotlib==3.11.0
+seaborn
+pillow
+joblib
+tqdm==4.68.4
+ipykernel
